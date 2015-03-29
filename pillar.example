@@ -8,6 +8,11 @@ firewall:
       ips_allow:
         - 192.168.0.0/24
         - 10.0.2.2/32
+      source:
+        - 192.168.0.0/24
+        - 10.0.2.2/32
+      dport:
+        - 22
 
   whitelist:
     networks:
@@ -24,3 +29,16 @@ firewall:
           - 10.20.0.2
         '192.168.18.0/24':
           - 172.31.0.2
+  #Support custom rules
+  #iptables -A INPUT -p tcp --syn --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
+  #ip6tables -A INPUT -p tcp --syn --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
+  custom:
+    conn_limit:
+      chain: INPUT
+      p: tcp
+      dport: 49152:65535
+      match:
+        - connlimit
+      connlimit-above: 100
+      jump: REJECT
+

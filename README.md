@@ -30,6 +30,11 @@ firewall:
       ips_allow:
         - 192.168.0.0/24
         - 10.0.2.2/32
+      source:
+        - 192.168.0.0/24
+        - 10.0.2.2/32
+      dport:
+        - 22
 ```
 
 Allow an entire class such as your internal network:
