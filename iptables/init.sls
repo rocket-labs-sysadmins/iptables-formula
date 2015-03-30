@@ -37,14 +37,18 @@ def getFamily(config):
     family = ['ipv6']
   return family
 
-def INPUT(family, args=[]):
-  chain = [
+
+def custom_chain(family, chain, args=[]):
+  ch = [
     {'family': family},
     {'table': 'filter'},
-    {'chain': 'INPUT'}
+    {'chain': chain}
   ]
-  chain.extend(args)
-  return chain
+  ch.extend(args)
+  return ch
+
+def INPUT(family, args=[]):
+  return custom_chain(family, 'INPUT', args)
 
 def FORWARD(family, args=[]):
   chain = [
@@ -89,11 +93,19 @@ def load_policy(strict = False):
   for family in ['ipv4', 'ipv6']:
     policy[family + 'tables_INPUT_allow_lo'] = {
       'iptables.append': accept(INPUT(family,[
-        {'i': 'lo'}
+        {'i': 'lo'},
+        {'match': [
+          'comment'
+        ]},
+        {'comment': "Allow on Loopback"},
+        {'require': [
+          {'iptables': family + 'tables_INPUT_allow_state'}
+        ]}
       ]))
     }
     policy[family + 'tables_INPUT_allow_state'] = {
-      'iptables.append': accept(INPUT(family,[
+      'iptables.insert': accept(INPUT(family,[
+        {'position': 1},
         {'match': 'state'},
         {'connstate': 'RELATED,ESTABLISHED'}
       ]))
@@ -127,8 +139,9 @@ def load_policy(strict = False):
       ]
     }
 
-  policy['ipv4tables_INPUT_allow_state'] = {
-    'iptables.append': accept(FORWARD('ipv4',[
+  policy['ipv4tables_FORWARD_allow_state'] = {
+    'iptables.insert': accept(FORWARD('ipv4',[
+      {'position': 1},
       {'match': 'state'},
       {'connstate': 'RELATED,ESTABLISHED'}
     ]))
@@ -141,15 +154,18 @@ def load_policy(strict = False):
   }
   policy['ipv6tables_INPUT_icmp'] = {
     'iptables.append': accept(INPUT('ipv6',[
-      {'protocol': 'icmp6'}
+      {'protocol': 'icmpv6'}
     ]))
   }
 
   return policy
 
 
-def service_rules(name, config, strict):
+def service_rules(name, config, chain='INPUT'):
   service = {}
+
+  strict = __salt__['pillar.get']('firewall:strict', False)
+
   block_nomatch = config.pop('block_nomatch', False)
   protos = str2list(config.pop('proto', ['tcp']))
   config['dport'] = str2list(config.pop('dport', [name]))
@@ -172,19 +188,19 @@ def service_rules(name, config, strict):
           for source_ip in source_list:
             tmp_config['source'] = source_ip
             service[ allow_rule_id + '_' + source_ip ] = {
-              'iptables.append': accept(INPUT(family,
+              'iptables.append': accept(custom_chain(family, chain,
                 dict2state(tmp_config)))
             }
         else:
           service[ allow_rule_id ] = {
-            'iptables.append': accept(INPUT(family,
+            'iptables.append': accept(custom_chain(family, chain,
               dict2state(tmp_config)))
           }
 
         not_config = tmp_config.copy()
         if source_list and not strict and block_nomatch or __salt__['pillar.get']('firewall:block_nomatch', False):
           not_config.pop('source')
-          rule = drop(INPUT(family,
+          rule = drop(custom_chain(family, chain,
                 dict2state(tmp_config)))
           rule.append(
                   {'require': [
@@ -242,6 +258,55 @@ def whitelist_rules(name, config):
 
   return rules
 
+def service_chain(services):
+  chains={}
+  rules = {}
+  ret_rule = {}
+  in_rule = {}
+  for service_name, service_details in services.items():
+    rules.update(service_rules(service_name, service_details, chain='inputSERVICES'))
+
+  require = {'ipv6': [], 'ipv4': []}
+  for rule_id in rules.keys():
+    family = rule_id[:4]
+    require[family].append({'iptables': rule_id})
+
+  for family in ['ipv4', 'ipv6']:
+    chains[family + 'tables_inputSERVICES_chain']={
+      'iptables.chain_present':[
+        {'name': 'inputSERVICES'},
+        {'table': 'filter'},
+        {'family': family},
+        {'require_in': require[family]}
+      ]
+    }
+    ret_rule[family + 'tables_inputSERVICES_return']={
+      'iptables.append': [
+        {'family': family},
+        {'table': 'filter'},
+        {'chain': 'inputSERVICES'},
+        {'jump': 'RETURN'},
+        {'require': require[family]}
+      ]
+    }
+    in_rule[family + 'tables_inputSERVICES_in']={
+      'iptables.append': [
+        {'family': family},
+        {'table': 'filter'},
+        {'chain': 'INPUT'},
+        {'jump': 'inputSERVICES'},
+        {'require':[
+          {'iptables': family + 'tables_inputSERVICES_chain'}
+        ]}
+      ]
+    }
+
+  rules.update(chains)
+  rules.update(ret_rule)
+  rules.update(in_rule)
+  return rules  
+
+
 def run():
   config = {}
   if not __salt__['pillar.get']('firewall:enabled'):
@@ -266,8 +331,7 @@ def run():
         }
 
   config.update(load_policy(strict))
-  for service_name, service_details in firewall.get('services', {}).items():
-    config.update(service_rules(service_name, service_details, strict))
+  config.update(service_chain(firewall.get('services', {})))
   for service_name, service_details in firewall.get('nat', {}).items():
     config.update(nat_rules(service_name, service_details))
   for rule_name, rule_details in firewall.get('custom', {}).items():
