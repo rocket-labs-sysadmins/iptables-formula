@@ -1,6 +1,7 @@
 #!py
 
 import re
+from collections import OrderedDict
 
 ipv4_re = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.?(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}")
 ipv6_re = re.compile('^(((?=.*(::))(?!.*\3.+\3))\3?|[\dA-F]{1,4}:)([\dA-F]{1,4}(\3|:\b)|\2){5}(([\dA-F]{1,4}(\3|:\b|$)|\2){2}|(((2[0-4]|1\d|[1-9])?\d|25[0-5])\.?\b){4})\Z', re.I|re.S)
@@ -89,7 +90,7 @@ def drop(args=[]):
 def load_policy(strict = False):
   if not strict:
     return {}
-  policy = {}
+  policy = OrderedDict()
   for family in ['ipv4', 'ipv6']:
     policy[family + 'tables_INPUT_allow_lo'] = {
       'iptables.append': accept(INPUT(family,[
@@ -122,12 +123,22 @@ def load_policy(strict = False):
         ]}
       ]
     }
+    policy[family + 'tables_FORWARD_allow_state'] = {
+      'iptables.insert': accept(FORWARD(family,[
+        {'position': 1},
+        {'match': 'state'},
+        {'connstate': 'RELATED,ESTABLISHED'}
+      ]))
+    }
     policy[family + 'tables_forward_policy'] = {
       'iptables.set_policy':[
         {'family': family},
         {'table': 'filter'},
         {'chain': 'FORWARD'},
-        {'policy': 'DROP'}
+        {'policy': 'DROP'},
+        {'require':[
+          {'iptables': family + 'tables_FORWARD_allow_state'}
+        ]}
       ]
     }
     policy[family + 'tables_output_policy'] = {
@@ -139,13 +150,6 @@ def load_policy(strict = False):
       ]
     }
 
-  policy['ipv4tables_FORWARD_allow_state'] = {
-    'iptables.insert': accept(FORWARD('ipv4',[
-      {'position': 1},
-      {'match': 'state'},
-      {'connstate': 'RELATED,ESTABLISHED'}
-    ]))
-  }
 
   policy['ipv4tables_INPUT_icmp'] = {
     'iptables.append': accept(INPUT('ipv4',[
@@ -308,7 +312,7 @@ def service_chain(services):
 
 
 def run():
-  config = {}
+  config = OrderedDict()
   if not __salt__['pillar.get']('firewall:enabled'):
     return config
 
