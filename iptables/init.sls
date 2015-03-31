@@ -279,6 +279,31 @@ def whitelist_rules(name, config, suffix=''):
 
   return rules
 
+def flush_fw(family=['ipv4', 'ipv6'], table=['filter', 'nat', 'mangle', 'raw'], chain='', args=[]):
+  family=str2list(family)
+  table=str2list(table)
+  rules = OrderedDict()
+  for f in family:
+    for t in table:
+      if chain:
+        rule_id = f +  'tables_' + t + '_' + chain + '_flush'
+        rule = [
+            {'table': t},
+            {'family': f},
+            {'chain': chain}
+        ]
+      else:
+        rule_id = f+'tables_' + t +'_flush'
+        rule = [
+            {'table': t},
+            {'family': f}
+        ]
+      rule.extend(args)
+      rules.update({rule_id:{
+        'iptables.flush': rule}
+        })
+  return rules
+
 def get_required(rules):
   #require = {'ipv6': {'filter': {}, 'nat': {}, 'mangle': {}, 'raw': {}}, 
   #'ipv4': {'filter': {}, 'nat': {}, 'mangle': {}, 'raw': {}}
@@ -296,7 +321,7 @@ def get_required(rules):
   return require
 
 
-def install_chains(suffix, require):
+def install_chains(suffix, require, flush=False):
   rules = OrderedDict()
   for family in ['ipv4', 'ipv6']:
     for table, chains_req in require[family].iteritems():
@@ -309,6 +334,8 @@ def install_chains(suffix, require):
             {'require_in': requisite}
           ]
         }
+        if flush:
+          rules.update(flush_fw(family, table, chain, [{'require_in': requisite}]))
         rules[family + 'tables_'+ table + '_' + chain + '_return']={
           'iptables.append': [
             {'family': family},
@@ -336,31 +363,34 @@ def install_chains(suffix, require):
 def service_chain(services):
   rules = OrderedDict()
   chain_name = 'inputSERVICES'
+  flush = services.pop('flush', False)
   for service_name, service_details in services.items():
     rules.update(service_rules(service_name, service_details, chain=chain_name))
 
   require = get_required(rules)
-  rules.update(install_chains('SERVICES', require))
+  rules.update(install_chains('SERVICES', require, flush))
   return rules  
 
 def customrules_chain(custom):
   rules = OrderedDict()
   chain_suffix = 'CUSTOM'
+  flush = custom.pop('flush', False)
   for name, details in custom.items():
     rules.update(custom_rules(name, details, suffix=chain_suffix))
 
   require = get_required(rules)
-  rules.update(install_chains(chain_suffix, require))
+  rules.update(install_chains(chain_suffix, require, flush))
   return rules
 
 def whitelist_chain(whitelist):
   rules = OrderedDict()
   suffix='WHITELIST'
+  flush = whitelist.pop('flush', False)
   for name, details in whitelist.items():
     rules.update(whitelist_rules(name, details, suffix=suffix))
 
   require = get_required(rules)
-  rules.update(install_chains(suffix, require))
+  rules.update(install_chains(suffix, require, flush))
   return rules
 
 def run():
@@ -385,7 +415,8 @@ def run():
             {'enable': True}
           ]
         }
-
+  if firewall.get('flush', False):
+    config.update(flush_fw())
   config.update(load_policy(strict))
   config.update(whitelist_chain(
       firewall.get('whitelist', {})
@@ -393,14 +424,10 @@ def run():
   config.update(customrules_chain(
       firewall.get('custom', {})
     ))
-  #for service_name, service_details in firewall.get('whitelist', {}).items():
-  #  config.update(whitelist_rules(service_name, service_details))
-
-  config.update(service_chain(firewall.get('services', {})))
+  config.update(service_chain(
+      firewall.get('services', {})
+    ))
   for service_name, service_details in firewall.get('nat', {}).items():
     config.update(nat_rules(service_name, service_details))
-  #for rule_name, rule_details in firewall.get('custom', {}).items():
-  #  config.update(custom_rules(rule_name, rule_details))
-  
   return config
 

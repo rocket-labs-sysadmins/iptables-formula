@@ -2,7 +2,9 @@ firewall:
   install: True
   enabled: True
   strict: True
+  flush: False #Global, flush all rules if True
   services:
+    flush: False # flush only services chain
     ssh:
       block_nomatch: False
       ips_allow:
