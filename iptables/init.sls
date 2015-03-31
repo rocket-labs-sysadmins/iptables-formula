@@ -3,7 +3,7 @@
 import re
 from collections import OrderedDict
 
-ipv4_re = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.?(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}")
+ipv4_re = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
 ipv6_re = re.compile('^(((?=.*(::))(?!.*\3.+\3))\3?|[\dA-F]{1,4}:)([\dA-F]{1,4}(\3|:\b)|\2){5}(([\dA-F]{1,4}(\3|:\b|$)|\2){2}|(((2[0-4]|1\d|[1-9])?\d|25[0-5])\.?\b){4})\Z', re.I|re.S)
 
 def __pkgs():
@@ -22,20 +22,33 @@ def str2list(param):
 
 def dict2state(config):
   rule = []
-  for k, v in config.items():
+  for k, v in config.iteritems():
     rule.append( {k: v} )
+  return rule
+
+def state2dict(config):
+  rule = OrderedDict()
+  for option in config:
+    rule.update(option)
   return rule
 
 def getFamily(config):
   family = str2list(config.pop('family', []))
+
+  source_list = str2list(config.pop('source',[])) 
+  source_list.extend( str2list(config.get('ips_allow',[])) ) #backward compability
+  source_list = {}.fromkeys(source_list).keys()  # make keys uniq
+
   if family:
     return family
-  if not config.get('source', []):
+  if not source_list:
     family = ['ipv4', 'ipv6']
-  elif [ ip for ip in str2list(config.get('source')) if re.search(ipv4_re, ip) ]:
+  elif [ ip for ip in source_list if re.search(ipv4_re, ip) ]:
     family = ['ipv4']
-  elif [ ip for ip in str2list(config.get('source')) if re.search(ipv6_re, ip) ]:
+  elif [ ip for ip in source_list if re.search(ipv6_re, ip) ]:
     family = ['ipv6']
+  else:
+    family = ['fucked']
   return family
 
 
@@ -166,7 +179,7 @@ def load_policy(strict = False):
 
 
 def service_rules(name, config, chain='INPUT'):
-  service = {}
+  service = OrderedDict()
 
   strict = __salt__['pillar.get']('firewall:strict', False)
 
@@ -235,81 +248,120 @@ def nat_rules(name, config):
   return rules
 
 
-def custom_rules(name, config):
+def custom_rules(name, config, suffix=''):
   rules_list=[]
-  rules={}
+  rules = OrderedDict()
   config.update({'table': config.get('table', 'filter')})
   action = config.pop('action', 'append').lower()
+  chain_name = config.get('chain')
+  if suffix:
+    config.update({'chain': config['chain'].lower() + suffix})
   for family in getFamily(config):
     config.update({'family': family})
     rules_list.append(config.copy())
   for rule in rules_list:
     family = rule['family']
-    rules[family + 'tables_' + rule['chain'] + '_' + name + '_' + rule['jump'] ] = {
+    rules[family + 'tables_' + rule['table'] + '_' + chain_name + '_' + name + '_' + rule['jump'] ] = {
       'iptables.' + action: dict2state(rule)
     }
   return rules
 
-def whitelist_rules(name, config):
-  rules={}
+def whitelist_rules(name, config, suffix=''):
+  rules=OrderedDict()
+
   for family in getFamily(config):
-    for ip in config.get('ips_allow',[]):
-      rules[family + 'tables_' + name + '_allow_' + ip] = {
-          'iptables.append': accept(INPUT(family,
+    for ip in str2list(config.get('ips_allow',[])):
+      rules[family + 'tables_whitelist_' + name + '_allow_' + ip] = {
+          'iptables.append': accept(custom_chain(family,'input' + suffix,
             dict2state({'source': ip})
           ))
       }
 
   return rules
 
-def service_chain(services):
-  chains={}
-  rules = {}
-  ret_rule = {}
-  in_rule = {}
-  for service_name, service_details in services.items():
-    rules.update(service_rules(service_name, service_details, chain='inputSERVICES'))
-
-  require = {'ipv6': [], 'ipv4': []}
-  for rule_id in rules.keys():
+def get_required(rules):
+  #require = {'ipv6': {'filter': {}, 'nat': {}, 'mangle': {}, 'raw': {}}, 
+  #'ipv4': {'filter': {}, 'nat': {}, 'mangle': {}, 'raw': {}}
+  #          }
+  require = {'ipv6': {}, 'ipv4': {}}
+  for rule_id, details in rules.iteritems():
     family = rule_id[:4]
-    require[family].append({'iptables': rule_id})
+    table = state2dict(details['iptables.append']).get('table')
+    chain = state2dict(details['iptables.append']).get('chain')
+    if not require[family].get(table, {}):
+      require[family][table] = {}
+    if not require[family][table].get(chain, []):
+      require[family][table][chain] = []
+    require[family][table][chain].append({'iptables': rule_id})
+  return require
 
+
+def install_chains(suffix, require):
+  rules = OrderedDict()
   for family in ['ipv4', 'ipv6']:
-    chains[family + 'tables_inputSERVICES_chain']={
-      'iptables.chain_present':[
-        {'name': 'inputSERVICES'},
-        {'table': 'filter'},
-        {'family': family},
-        {'require_in': require[family]}
-      ]
-    }
-    ret_rule[family + 'tables_inputSERVICES_return']={
-      'iptables.append': [
-        {'family': family},
-        {'table': 'filter'},
-        {'chain': 'inputSERVICES'},
-        {'jump': 'RETURN'},
-        {'require': require[family]}
-      ]
-    }
-    in_rule[family + 'tables_inputSERVICES_in']={
-      'iptables.append': [
-        {'family': family},
-        {'table': 'filter'},
-        {'chain': 'INPUT'},
-        {'jump': 'inputSERVICES'},
-        {'require':[
-          {'iptables': family + 'tables_inputSERVICES_chain'}
-        ]}
-      ]
-    }
+    for table, chains_req in require[family].iteritems():
+      for chain, requisite in chains_req.iteritems():
+        rules[family + 'tables_'+ table + '_' + chain + '_chain'] = {
+          'iptables.chain_present':[
+            {'name': chain},
+            {'table': table},
+            {'family': family},
+            {'require_in': requisite}
+          ]
+        }
+        rules[family + 'tables_'+ table + '_' + chain + '_return']={
+          'iptables.append': [
+            {'family': family},
+            {'table': table},
+            {'chain': chain},
+            {'jump': 'RETURN'},
+            {'require': requisite}
+          ]
+        }
+        rules[family + 'tables_'+ table + '_' + chain + '_in']={
+          'iptables.append': [
+            {'family': family},
+            {'table': table},
+            {'chain': chain.replace(suffix,'').upper()},
+            {'jump': chain},
+            {'require':[
+              {'iptables': family + 'tables_'+ table + '_' + chain + '_chain'}
+            ]}
+          ]
+        }
 
-  rules.update(chains)
-  rules.update(ret_rule)
-  rules.update(in_rule)
+  return rules
+
+
+def service_chain(services):
+  rules = OrderedDict()
+  chain_name = 'inputSERVICES'
+  for service_name, service_details in services.items():
+    rules.update(service_rules(service_name, service_details, chain=chain_name))
+
+  require = get_required(rules)
+  rules.update(install_chains('SERVICES', require))
   return rules  
 
+def customrules_chain(custom):
+  rules = OrderedDict()
+  chain_suffix = 'CUSTOM'
+  for name, details in custom.items():
+    rules.update(custom_rules(name, details, suffix=chain_suffix))
+
+  require = get_required(rules)
+  rules.update(install_chains(chain_suffix, require))
+  return rules
+
+def whitelist_chain(whitelist):
+  rules = OrderedDict()
+  suffix='WHITELIST'
+  for name, details in whitelist.items():
+    rules.update(whitelist_rules(name, details, suffix=suffix))
+
+  require = get_required(rules)
+  rules.update(install_chains(suffix, require))
+  return rules
 
 def run():
   config = OrderedDict()
@@ -335,11 +387,20 @@ def run():
         }
 
   config.update(load_policy(strict))
+  config.update(whitelist_chain(
+      firewall.get('whitelist', {})
+    ))
+  config.update(customrules_chain(
+      firewall.get('custom', {})
+    ))
+  #for service_name, service_details in firewall.get('whitelist', {}).items():
+  #  config.update(whitelist_rules(service_name, service_details))
+
   config.update(service_chain(firewall.get('services', {})))
   for service_name, service_details in firewall.get('nat', {}).items():
     config.update(nat_rules(service_name, service_details))
-  for rule_name, rule_details in firewall.get('custom', {}).items():
-    config.update(custom_rules(rule_name, rule_details))
+  #for rule_name, rule_details in firewall.get('custom', {}).items():
+  #  config.update(custom_rules(rule_name, rule_details))
   
   return config
 

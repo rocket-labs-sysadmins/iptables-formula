@@ -30,12 +30,12 @@ firewall:
         '192.168.18.0/24':
           - 172.31.0.2
   #Support custom rules
-  #iptables -A INPUT -p tcp --syn --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
-  #ip6tables -A INPUT -p tcp --syn --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
+  #iptables -A INPUT -p tcp --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
+  #ip6tables -A INPUT -p tcp --dport 49152:65535 -m connlimit --connlimit-above 100 -j REJECT
   custom:
     conn_limit:
       chain: INPUT
-      p: tcp
+      proto: tcp
       dport: 49152:65535
       match:
         - connlimit
