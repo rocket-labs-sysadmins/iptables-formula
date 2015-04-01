@@ -182,7 +182,8 @@ def service_rules(name, config, chain='INPUT'):
   service = OrderedDict()
 
   strict = __salt__['pillar.get']('firewall:strict', False)
-
+  if config == True:
+    config = {}
   block_nomatch = config.pop('block_nomatch', False)
   protos = str2list(config.pop('proto', ['tcp']))
   config['dport'] = str2list(config.pop('dport', [name]))
