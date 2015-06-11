@@ -419,6 +419,8 @@ def run():
     return config
 
   firewall = __salt__['pillar.get']('firewall', {})
+  firewallGrain = __salt__['grains.get']('firewall',[])
+  firstrun = False
   strict = firewall.get('strict', False)
   if firewall.get('install', False):
     config['install_packages'] = {
@@ -434,7 +436,11 @@ def run():
             {'enable': True}
           ]
         }
-  if firewall.get('flush', False):
+  # Flush firewall in firstrun
+  if firewall.get('flushfirstrun', True) and 'managed' not in firewallGrain:
+    firstrun = True
+    __salt__['grains.append']('firewall', 'managed')
+  if firewall.get('flush', False) or firstrun:
     config.update(flush_fw())
   config.update(load_policy(strict))
   config.update(whitelist_chain(

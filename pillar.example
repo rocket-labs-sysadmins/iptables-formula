@@ -3,6 +3,7 @@ firewall:
   enabled: True
   strict: True
   flush: False #Global, flush all rules if True
+  firstrunflush: True
   services:
     flush: False # flush only services chain
     ssh:
