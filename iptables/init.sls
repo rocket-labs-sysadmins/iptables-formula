@@ -1,19 +1,24 @@
 #!py
 
 import re
+import yaml
 from collections import OrderedDict
+from salt.utils.validate.net import ipv4_addr, ipv6_addr
 
 ipv4_re = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
 ipv6_re = re.compile('^(((?=.*(::))(?!.*\3.+\3))\3?|[\dA-F]{1,4}:)([\dA-F]{1,4}(\3|:\b)|\2){5}(([\dA-F]{1,4}(\3|:\b|$)|\2){2}|(((2[0-4]|1\d|[1-9])?\d|25[0-5])\.?\b){4})\Z', re.I|re.S)
 
-def __pkgs():
-  pkgs = __salt__['grains.filter_by']({
-    'Debian': ['iptables', 'iptables-persistent'],
-    'RedHat': ['iptables', 'iptables-services'],
-    'default': 'RedHat'
-  })
+def pkgs(pkg_defaults):
+  pkgs = __salt__['grains.filter_by'](pkg_defaults)
   return pkgs
 
+def load_defaults():
+  #with open('iptables/defaults.yaml') as defaults_file:
+  __salt__['cp.cache_file']('salt://iptables/defaults.yaml')
+  with open('defaults.yaml') as defaults_file:
+    defaults = yaml.load(defaults_file)
+  defaults.update({'pkgs': __salt__['grains.filter_by'](defaults.get('pkgs'))})
+  return defaults
 
 def str2list(param):
   if type(param) == type(''):
@@ -43,9 +48,11 @@ def getFamily(config):
     return family
   if not source_list:
     family = ['ipv4', 'ipv6']
-  elif [ ip for ip in source_list if re.search(ipv4_re, ip) ]:
+  #elif [ ip for ip in source_list if re.search(ipv4_re, ip) ]:
+  elif [ ip for ip in source_list if ipv4_addr(ip) ]:
     family = ['ipv4']
-  elif [ ip for ip in source_list if re.search(ipv6_re, ip) ]:
+  #elif [ ip for ip in source_list if re.search(ipv6_re, ip) ]:
+  elif [ ip for ip in source_list if ipv6_addr(ip) ]:
     family = ['ipv6']
   else:
     family = ['fucked']
@@ -415,17 +422,18 @@ def whitelist_chain(whitelist):
 
 def run():
   config = OrderedDict()
+  defaults = load_defaults()
   if not __salt__['pillar.get']('firewall:enabled'):
     return config
 
   firewall = __salt__['pillar.get']('firewall', {})
   firewallGrain = __salt__['grains.get']('firewall',[])
   firstrun = False
-  strict = firewall.get('strict', False)
-  if firewall.get('install', False):
+  strict = firewall.get('strict', defaults.get('strict'))
+  if firewall.get('install', defaults.get('install')):
     config['install_packages'] = {
         'pkg.installed':[
-          {'pkgs': __pkgs()},
+          {'pkgs': defaults.get('pkgs')},
         ]
     }
     if __grains__['os_family'] == 'RedHat':
@@ -437,10 +445,10 @@ def run():
           ]
         }
   # Flush firewall in firstrun
-  if firewall.get('flushfirstrun', True) and 'managed' not in firewallGrain:
+  if firewall.get('flushfirstrun', defaults.get('flushfirstrun')) and 'managed' not in firewallGrain:
     firstrun = True
     __salt__['grains.append']('firewall', 'managed')
-  if firewall.get('flush', False) or firstrun:
+  if firewall.get('flush', defaults.get('flush')) or firstrun:
     config.update(flush_fw())
   config.update(load_policy(strict))
   config.update(whitelist_chain(

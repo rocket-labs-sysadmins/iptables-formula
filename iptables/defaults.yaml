@@ -1,0 +1,14 @@
+pkgs:
+  Debian: 
+    - iptables
+    - iptables-persistent
+  RedHat:
+    - iptables
+    - iptables-services
+  default: 'RedHat'
+
+iptables:
+  flush: False
+  firstrunflush: True
+  strict: False
+  install: False
