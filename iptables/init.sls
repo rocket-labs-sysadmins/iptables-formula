@@ -209,7 +209,7 @@ def service_rules(name, config, chain='INPUT'):
       tmp_config['proto'] = proto
       for dport in config['dport']:
         tmp_config['dport'] = dport
-        if name != dport: id_name = name + '_on_port_' + str(dport)
+        if name != dport: id_name = name + '_on_port_' + str(dport) + '_' + proto
         allow_rule_id = family +'tables_' + id_name + '_allow'
         if source_list:
           for source_ip in source_list:
