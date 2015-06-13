@@ -2,6 +2,7 @@
 
 import re
 import yaml
+import os.path
 from collections import OrderedDict
 from salt.utils.validate.net import ipv4_addr, ipv6_addr
 
@@ -15,7 +16,8 @@ def pkgs(pkg_defaults):
 def load_defaults():
   #with open('iptables/defaults.yaml') as defaults_file:
   __salt__['cp.cache_file']('salt://iptables/defaults.yaml')
-  with open('defaults.yaml') as defaults_file:
+  path = os.path.dirname(__file__)
+  with open(path + '/defaults.yaml') as defaults_file:
     defaults = yaml.load(defaults_file)
   defaults.update({'pkgs': __salt__['grains.filter_by'](defaults.get('pkgs'))})
   return defaults
