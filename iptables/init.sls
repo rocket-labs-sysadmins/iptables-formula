@@ -6,6 +6,10 @@ import os.path
 from collections import OrderedDict
 from salt.utils.validate.net import ipv4_addr, ipv6_addr
 
+import logging
+
+log = logging.getLogger(__name__)
+
 ipv4_re = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)")
 ipv6_re = re.compile('^(((?=.*(::))(?!.*\3.+\3))\3?|[\dA-F]{1,4}:)([\dA-F]{1,4}(\3|:\b)|\2){5}(([\dA-F]{1,4}(\3|:\b|$)|\2){2}|(((2[0-4]|1\d|[1-9])?\d|25[0-5])\.?\b){4})\Z', re.I|re.S)
 
@@ -19,7 +23,11 @@ def load_defaults():
   path = os.path.dirname(__file__)
   with open(path + '/defaults.yaml') as defaults_file:
     defaults = yaml.load(defaults_file)
-  defaults.update({'pkgs': __salt__['grains.filter_by'](defaults.get('pkgs'))})
+  pkgs = __salt__['grains.filter_by'](defaults.get('pkgs'))
+  if type(pkgs) == type({}):
+    pkgs = __salt__['grains.filter_by'](pkgs, grain='osmajorrelease')
+  defaults = defaults.get('iptables', {})
+  defaults.update({'pkgs': pkgs})
   return defaults
 
 def str2list(param):
@@ -50,10 +58,8 @@ def getFamily(config):
     return family
   if not source_list:
     family = ['ipv4', 'ipv6']
-  #elif [ ip for ip in source_list if re.search(ipv4_re, ip) ]:
   elif [ ip for ip in source_list if ipv4_addr(ip) ]:
     family = ['ipv4']
-  #elif [ ip for ip in source_list if re.search(ipv6_re, ip) ]:
   elif [ ip for ip in source_list if ipv6_addr(ip) ]:
     family = ['ipv6']
   else:
@@ -201,16 +207,17 @@ def service_rules(name, config, chain='INPUT'):
   source_list = {}.fromkeys(source_list).keys()  # make keys uniq
   tmp_config = config.copy()
   config.update({'source': source_list})
-  if  [name] == tmp_config['dport']:
-    id_name = name
+  id_name = name
   #for family in str2list(config.pop('family', ['ipv4', 'ipv6'])):
   for family in getFamily(config):
     for proto in protos:
       tmp_config['proto'] = proto
       for dport in config['dport']:
         tmp_config['dport'] = dport
-        if name != dport: id_name = name + '_on_port_' + str(dport) + '_' + proto
+        if name != dport:
+          id_name = name + '_on_port_' + str(dport) + '_' + proto
         allow_rule_id = family +'tables_' + id_name + '_allow'
+        #log_debug("allow_rule_id= " + allow_rule_id)
         if source_list:
           for source_ip in source_list:
             tmp_config['source'] = source_ip
@@ -447,9 +454,9 @@ def run():
           ]
         }
   # Flush firewall in firstrun
-  if firewall.get('flushfirstrun', defaults.get('flushfirstrun')) and 'managed' not in firewallGrain:
+  if firewall.get('firstrunflush', defaults.get('firstrunflush')) and not (firewallGrain and 'managed' in firewallGrain):
     firstrun = True
-    __salt__['grains.append']('firewall', 'managed')
+    #__salt__['grains.append']('firewall', [])
   if firewall.get('flush', defaults.get('flush')) or firstrun:
     config.update(flush_fw())
   config.update(load_policy(strict))
@@ -464,5 +471,14 @@ def run():
     ))
   for service_name, service_details in firewall.get('nat', {}).items():
     config.update(nat_rules(service_name, service_details))
+  if firstrun:
+    config['firewall_managed'] = {
+        'module.run':[
+          {'name': 'grains.append'},
+          {'key': 'firewall'},
+          {'val': 'managed'},
+          {'convert': True}
+        ]
+    }
   return config
 

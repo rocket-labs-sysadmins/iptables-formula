@@ -18,11 +18,15 @@
   # Generate ipsets for all services that we have information about
   {%- for service_name, service_details in pfirewall.get('services', {}).items() %}  
     {% set block_nomatch = service_details.get('block_nomatch', False) %}
+    
+    # Set rule for ipv4 and ipv6 
+    {%- for family in service_details.get('family', ['ipv4', 'ipv6']) %}
 
     # Allow rules for ips/subnets
-    {%- for ip in service_details.get('ips_allow',{}) %}
-.iptables_{{sls_params.parent}}_{{service_name}}_allow_{{ip}}:
+      {%- for ip in service_details.get('ips_allow',{}) %}
+.{{ family }}tables_{{sls_params.parent}}_{{service_name}}_allow_{{ip}}:
   iptables.append:
+    - family: {{ family }}
     - table: filter
     - chain: INPUT
     - jump: ACCEPT
@@ -30,9 +34,9 @@
     - dport: {{ service_name }}
     - proto: tcp
     - save: True
-    {%- endfor %}
+      {%- endfor %}
 
-    {%- if not strict_mode and global_block_nomatch or block_nomatch %}
+      {%- if not strict_mode and global_block_nomatch or block_nomatch %}
 # If strict mode is disabled we may want to block anything else
 .iptables_{{sls_params.parent}}_{{service_name}}_deny_other:
   iptables.append:
@@ -43,7 +47,8 @@
     - dport: {{ service_name }}
     - proto: tcp
     - save: True
-    {%- endif %}    
+      {%- endif %}    
+    {%- endfor %}
 
   {%- endfor %}
 {%- endif %}

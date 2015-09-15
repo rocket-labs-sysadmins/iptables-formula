@@ -3,8 +3,12 @@ pkgs:
     - iptables
     - iptables-persistent
   RedHat:
-    - iptables
-    - iptables-services
+    '7':
+      - iptables
+      - iptables-services
+    '6':
+      - iptables
+      - iptables-ipv6
   default: 'RedHat'
 
 iptables:
