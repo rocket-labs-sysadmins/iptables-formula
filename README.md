@@ -91,10 +91,18 @@ You can use nat for interface.
 ```
 #!stateconf yaml . jinja
 
-# iptables -t nat -A POSTROUTING -o eth0 -s 192.168.18.0/24 -j MASQUERADE
+# iptables --wait -t nat -A PREROUTING  -p tcp --dport 4443  --source 0.0.0.0/0 --jump DNAT --to-destination 192.168.18.0:443
 
   nat:
     eth0:
-      ips_allow:
-        - 192.168.18.0/24
+      rules
+        icinga:
+          chain: 'PREROUTING'
+          dport: 4443
+          jump: 'DNAT
+          proto: 'tcp'
+          save: True
+          source: '0.0.0.0/0'
+          table: 'nat'
+          to-destination: '192.168.18.0:443'
 ```

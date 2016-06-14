@@ -249,19 +249,11 @@ def service_rules(name, config, chain='INPUT'):
 
 def nat_rules(name, config):
   rules={}
-  for source, ip_d in config.pop('rules', {}).items():
-    for dst in str2list(ip_d):
-      rules['ip4tables_' + name + '_allow_' + source + '_' + dst] = {
-        'iptables.append':[
-          {'table': 'nat'},
-          {'chain': 'POSTROUTING'},
-          {'jump': 'MASQUERADE'},
-          {'o': name},
-          {'source': source},
-          {'destination': dst},
-          {'save': True}
-        ]
-      }
+  for source, nat_items in config.pop('rules', {}).items():
+    tmp_rules = dict2state(nat_items)
+    rules['ip4tables_' + name + '_allow_' + source + '_' + nat_items.get('dst', "DEST")] = {
+      'iptables.append': tmp_rules
+    }
   return rules
 
 
